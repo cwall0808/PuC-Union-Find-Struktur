@@ -1,0 +1,9 @@
+def <a>twice(f : a -> a, x : a) : a =>
+  f(f(x))
+
+def <a, b>const(x : a, y : b) : a =>
+  x
+
+let shout = twice(fn s => s ++ "!") in
+let add_two = twice(fn x => x + 1) in
+add_two(10)
