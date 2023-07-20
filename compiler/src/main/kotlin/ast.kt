@@ -35,7 +35,7 @@ enum class Operator {
     Add, Sub, Mul, Div, Eq, Or, And, Concat
 }
 
-sealed class Monotype {
+sealed class Monotype (){
     object Integer : Monotype()
     object Text : Monotype()
     object Bool : Monotype()
@@ -43,6 +43,7 @@ sealed class Monotype {
     data class Var(val name: String) : Monotype()
     data class Function(val arg: Monotype, val result: Monotype) : Monotype()
     data class Unknown(val u: Int) : Monotype()
+    data class UF(val u: Int) : Monotype()
 
     fun print(): String = printInner(false)
 
@@ -59,6 +60,7 @@ sealed class Monotype {
             }
 
             is Unknown -> "u$u"
+            else -> ""
         }
     }
 
@@ -67,6 +69,7 @@ sealed class Monotype {
             Bool, is Constructor, Integer, Text, is Unknown -> this
             is Function -> Function(arg.substitute(v, replacement), result.substitute(v, replacement))
             is Var -> if (v == name) { replacement } else { this }
+            else -> {this}
         }
     }
 
@@ -75,9 +78,19 @@ sealed class Monotype {
             Bool, is Constructor, is Var, Integer, Text -> setOf()
             is Function -> arg.unknowns().union(result.unknowns())
             is Unknown -> setOf(u)
+            else -> setOf()
+        }
+    }
+
+    fun toUnionFind(uf: UnionFind): Monotype {
+        return when (this) {
+            is UF -> this
+            else -> UF(uf.find(this.hashCode()))
         }
     }
 }
+
+
 
 data class Polytype(val vars: List<String>, val type: Monotype) {
     fun unknowns(): Set<Int> = type.unknowns()
