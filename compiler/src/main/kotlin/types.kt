@@ -1,3 +1,4 @@
+import Monotype.Bool.toUnionFind
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentHashMapOf
 
@@ -15,8 +16,17 @@ class Typechecker {
     val solution: MutableMap<Int, Monotype> = mutableMapOf()
 
     val uf = UnionFind()
+    val unknownMap: MutableMap<Int, Monotype.Unknown> = mutableMapOf()
 
-    fun freshUnknown(uf: UnionFind): Monotype = Monotype.UF(uf.find(++unknownSupply))
+    fun freshUnknown(): Monotype {
+        // Create a new unknown type
+        val newUnknown = Monotype.Unknown(++unknownSupply)
+        // Update the uf data structure with the new unknown type
+        uf.parent[newUnknown.u] = newUnknown.u
+        // Store the created unknown type in the unknownMap
+        unknownMap[newUnknown.u] = newUnknown
+        return newUnknown
+    }
     fun applySolution(ty: Monotype, solution: Solution = this.solution): Monotype {
         return when (val tyRoot = ty.toUnionFind(uf)) {
             Monotype.Bool, is Monotype.Constructor, is Monotype.Var, Monotype.Integer, Monotype.Text -> tyRoot
@@ -42,20 +52,28 @@ class Typechecker {
         val tyRoot1 = ty1.toUnionFind(uf)
         val tyRoot2 = ty2.toUnionFind(uf)
 
-        if (tyRoot1 == tyRoot2) return
+        println("Unifying: ${tyRoot1.print()} with ${tyRoot2.print()}")
+
+        if (tyRoot1 == tyRoot2) {
+            println("Types are already unified")
+            return
+        }
         if (tyRoot1 is Monotype.Function && tyRoot2 is Monotype.Function) {
+            println("Unifying function types")
             unify(tyRoot1.arg, tyRoot2.arg)
             unify(tyRoot1.result, tyRoot2.result)
         } else if (tyRoot1 is Monotype.Unknown) {
             if (tyRoot2.unknowns().contains(tyRoot1.u)) {
                 throw Error("Can't resolve infinite type ${tyRoot1.print()} ~ ${tyRoot2.print()}")
             }
-            if(tyRoot2 is Monotype.UF) uf.union(tyRoot1.u, tyRoot2.u)
+            solution[uf.find(tyRoot1.u)] = ty2 // Updated this line to use uf.find(tyRoot1.u)
+            if (tyRoot2 is Monotype.UF) uf.union(tyRoot1.u, tyRoot2.u)
         } else if (tyRoot2 is Monotype.Unknown) {
             if (tyRoot1.unknowns().contains(tyRoot2.u)) {
                 throw Error("Can't resolve infinite type ${tyRoot2.print()} ~ ${tyRoot1.print()}")
             }
-            if(tyRoot1 is Monotype.UF) uf.union(tyRoot2.u, tyRoot1.u)
+            solution[uf.find(tyRoot2.u)] = ty1 // Updated this line to use uf.find(tyRoot2.u)
+            if (tyRoot1 is Monotype.UF) uf.union(tyRoot2.u, tyRoot1.u)
         } else {
             throw Error("Can't unify ${tyRoot1.print()} with ${tyRoot2.print()}")
         }
@@ -69,6 +87,10 @@ class Typechecker {
         val ctx: Context = prog.fnDefs.fold(builtinCtx) { acc, def ->
             acc.put(def.name, def.ty)
         }
+
+        // Reset unknownSupply before inferring the program
+        unknownSupply = 0
+
         prog.fnDefs.forEach { def ->
             val tyExpr = infer(ctx, def.expr)
             equalType("When inferring a definition", tyExpr, instantiate(def.ty))
@@ -84,7 +106,7 @@ class Typechecker {
             is Expr.App -> {
                 val tyFun = infer(ctx, expr.func)
                 val tyArg = infer(ctx, expr.arg)
-                val tyResult = freshUnknown(uf)
+                val tyResult = freshUnknown()
                 equalType("when applying a function", tyFun, Monotype.Function(tyArg, tyResult))
                 tyResult
             }
@@ -121,18 +143,17 @@ class Typechecker {
             }
 
             is Expr.Lambda -> {
-                val tyParam = expr.tyParam ?: freshUnknown(uf)
+                val tyParam = expr.tyParam ?: freshUnknown()
                 val newCtx = ctx.put(expr.param, Polytype.fromMono(tyParam))
                 val tyBody = infer(newCtx, expr.body)
                 Monotype.Function(tyParam, tyBody)
             }
 
             is Expr.Let -> {
-                val tyBound = generalize(ctx, infer(ctx, expr.bound))
-                println(expr.name + " : " + tyBound.pretty())
+                val tyBound = generalize(ctx, infer(ctx, expr.bound).toUnionFind(uf))
+                println("${expr.name} : ${tyBound.pretty()}")
                 val newCtx = ctx.put(expr.name, tyBound)
-                val tyBody = infer(newCtx, expr.body)
-                tyBody
+                infer(newCtx, expr.body)
             }
 
             is Expr.Var -> ctx[expr.n]?.let { instantiate(it) } ?: throw Error("Unknown variable ${expr.n}")
@@ -165,14 +186,14 @@ class Typechecker {
     }
 
     private fun instantiate(ty: Polytype): Monotype {
-        return ty.vars.fold(ty.type) { t, v -> t.substitute(v, freshUnknown(uf)) }
+        return ty.vars.fold(ty.type) { t, v -> t.substitute(v, freshUnknown()) }
     }
 
     private fun generalize(ctx: Context, ty: Monotype): Polytype {
         val unknowns = ty.unknowns().filterNot { u -> ctx.any { (_, ty) -> ty.unknowns().contains(u) } }
         val unknownVars = unknowns.zip('a'..'z')
         val solution: Solution = unknownVars.associate { (u, v) -> u to Monotype.Var(v.toString()) }
-        return Polytype(unknownVars.map { (_, v) -> v.toString() }, applySolution(ty, solution))
+        return Polytype(unknownVars.map { (_, v) -> v.toString() }, applySolution(ty, solution).toUnionFind(uf))
     }
 
     private fun matchPattern(ctx: Context, pattern: Pattern, ty: Monotype): Context {
@@ -197,32 +218,26 @@ class Typechecker {
 
 }
 
-class UnionFind{
+class UnionFind {
     val parent: MutableMap<Int, Int> = mutableMapOf()
 
     fun find(x: Int): Int {
-        if(x !in parent) {
+        if (x !in parent) {
             parent[x] = x
         }
-        if(parent[x] != x){
+        if (parent[x] != x) {
             parent[x] = find(parent[x]!!)
         }
         return parent[x]!!
     }
 
-    fun union(x: Int, y: Int){
+    fun union(x: Int, y: Int) {
         val rootX = find(x)
         val rootY = find(y)
-        if(rootX != rootY) {
+        if (rootX != rootY) {
             parent[rootX] = rootY
         }
     }
 }
-
-fun <T> PersistentMap<String, T>.toUnionFind(uf: UnionFind): PersistentMap<String, T> {
-    val result = this.mapValues { (_, v) -> (v as Monotype).toUnionFind(uf)}
-    return result as PersistentMap<String, T>
-}
-
 
 

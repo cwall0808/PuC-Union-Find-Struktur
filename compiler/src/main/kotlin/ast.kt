@@ -82,13 +82,16 @@ sealed class Monotype (){
         }
     }
 
-    fun toUnionFind(uf: UnionFind): Monotype {
+    fun Monotype.toUnionFind(uf: UnionFind): Monotype {
         return when (this) {
-            is UF -> this
-            else -> UF(uf.find(this.hashCode()))
+            is Monotype.UF -> this
+            is Monotype.Unknown -> Monotype.UF(uf.find(u))
+            else -> this
         }
     }
 }
+
+
 
 
 
@@ -106,22 +109,4 @@ data class Polytype(val vars: List<String>, val type: Monotype) {
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
